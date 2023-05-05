@@ -1,7 +1,5 @@
 using System.Linq;
-using MassTransit;
 using Microsoft.AspNetCore.Mvc;
-using Play.Catalog.Contracts;
 using Play.Catalog.Service.Dtos;
 using Play.Catalog.Service.Entities;
 using Play.Catalog.Service.Extensions;
@@ -14,19 +12,37 @@ namespace Play.Catalog.Service.Controllers
     public class ItemsController : ControllerBase
     {
         private readonly IRepository<Item> itemsRepository;
-        private readonly IPublishEndpoint publishEndpoint;
-        
-        public ItemsController(IRepository<Item> itemsRepository, IPublishEndpoint publishEndpoint)
+        private static int requestCounter = 0;
+
+        public ItemsController(IRepository<Item> itemsRepository)
         {
             this.itemsRepository = itemsRepository;
-            this.publishEndpoint = publishEndpoint;
         }
 
         [HttpGet]
         public async Task<ActionResult<IEnumerable<ItemDto>>> GetAsync()
         {
+            requestCounter++;
+
+            Console.WriteLine($"Request {requestCounter} starting...");
+
+            if(requestCounter <=2 )
+            {
+                Console.WriteLine($"Request {requestCounter} delaying...");
+                await Task.Delay(TimeSpan.FromSeconds(2));
+            }
+
+            if (requestCounter <= 4)
+            {
+                Console.WriteLine($"Request {requestCounter} 500 (Internal Server Error...");
+                await Task.Delay(TimeSpan.FromSeconds(4));
+                return StatusCode(500);
+            }
+
             var items = (await itemsRepository.GetAllAsync())
                         .Select(item => item.AsDto());
+
+            Console.WriteLine($"Request {requestCounter} 200 (Ok");
 
             return Ok(items);
         }
@@ -43,7 +59,7 @@ namespace Play.Catalog.Service.Controllers
         }
 
         [HttpPost]
-        public async Task<ActionResult<ItemDto>> PostAsync(CreateItemDto createItemDto)
+        public async Task<ActionResult<ItemDto>> Post(CreateItemDto createItemDto)
         {
             var item = new Item
             {
@@ -54,13 +70,11 @@ namespace Play.Catalog.Service.Controllers
             };
             await itemsRepository.CreateAsync(item);
 
-            await publishEndpoint.Publish(new CatalogItemCreated(item.Id, item.Name, item.Description));
-
             return CreatedAtAction(nameof(GetByIdAsync), new { id = item.Id }, item);
         }
 
         [HttpPut("{id}")]
-        public async Task<IActionResult> PutAsync(Guid id, UpdateItemDto updateItemDto)
+        public async Task<IActionResult> Put(Guid id, UpdateItemDto updateItemDto)
         {
             var existingItem = await itemsRepository.GetAsync(id);
             if (existingItem == null)
@@ -73,8 +87,6 @@ namespace Play.Catalog.Service.Controllers
             existingItem.Price = updateItemDto.price;
 
             await itemsRepository.UpdateAsync(existingItem);
-
-            await publishEndpoint.Publish(new CatalogItemUpdated(existingItem.Id, existingItem.Name, existingItem.Description));
 
             return NoContent();
 
@@ -92,9 +104,6 @@ namespace Play.Catalog.Service.Controllers
             }
 
             await itemsRepository.RemoveAsync(item.Id);
-
-            await publishEndpoint.Publish(new CatalogItemDeleted(id));
-
 
             return NoContent();
         }
